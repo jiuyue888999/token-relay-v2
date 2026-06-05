@@ -211,6 +211,9 @@ web.post("/register", async (c) => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       id, phone, email, passwordHash, apiKey, display_name, trialQuota
     );
+    // Create default API key for the user
+    run("INSERT INTO api_keys (id, user_id, name, key) VALUES (?, ?, ?, ?)",
+      `key_${uuidv4().slice(0,8)}`, id, '默认密钥', apiKey);
 
     // Log trial recharge
     run(
@@ -435,6 +438,43 @@ web.post("/api/admin/sms-config", async (c) => {
   return c.json({ success: true });
 });
 
+// ═══ API Key Management ══════════════════════════════════
+
+web.get("/keys", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.redirect("/login");
+  const { keysPage } = await import("../web/keys.js");
+  return c.html(keysPage({ title: "API 密钥管理", user: { display_name: auth.displayName, email: auth.email } }));
+});
+
+// Create a new API key
+web.post("/api/keys/create", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.json({ error: "请先登录" }, 401);
+  const { name } = await c.req.json();
+  const id = `key_${uuidv4().slice(0, 8)}`;
+  const key = `sk-${uuidv4().replace(/-/g, "")}`;
+  run("INSERT INTO api_keys (id, user_id, name, key) VALUES (?, ?, ?, ?)", id, auth.userId, name || "未命名密钥", key);
+  return c.json({ id, key, name });
+});
+
+// List user's API keys
+web.get("/api/keys/list", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.json({ error: "请先登录" }, 401);
+  const keys = all("SELECT id, name, key, is_active, created_at, last_used_at FROM api_keys WHERE user_id = ? ORDER BY created_at DESC", auth.userId);
+  return c.json({ keys });
+});
+
+// Revoke an API key
+web.post("/api/keys/revoke", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.json({ error: "请先登录" }, 401);
+  const { id } = await c.req.json();
+  run("UPDATE api_keys SET is_active = 0 WHERE id = ? AND user_id = ?", id, auth.userId);
+  return c.json({ success: true });
+});
+
 web.get("/logout", (c) => {
   deleteCookie(c, "tr_session", { path: "/" });
   return c.redirect("/");
@@ -455,6 +495,8 @@ web.get("/dashboard", async (c) => {
 
   if (!user) return c.redirect("/login");
 
+  const keyCount = (dbGet("SELECT COUNT(*) as cnt FROM api_keys WHERE user_id = ? AND is_active = 1", auth.userId) as any)?.cnt || 0;
+
   const recentLogs = all<Record<string, any>>(
     `SELECT id, provider, model, prompt_tokens, completion_tokens, total_tokens, quota_cost, success, error_msg, created_at
      FROM usage_logs WHERE user_id = ?
@@ -466,12 +508,13 @@ web.get("/dashboard", async (c) => {
     user: {
       id: String(user.id),
       email: String(user.email ?? ''),
+      phone: String(user.phone ?? ''),
       display_name: String(user.display_name ?? ''),
-      api_key: String(user.api_key ?? ''),
       quota_remaining: Number(user.quota_remaining ?? 0),
       total_quota_used: Number(user.total_quota_used ?? 0),
       created_at: String(user.created_at ?? ''),
     },
+    apiKeyCount: Number(keyCount),
     recentLogs: recentLogs.map(r => ({
       id: String(r.id),
       provider: String(r.provider),
