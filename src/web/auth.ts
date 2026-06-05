@@ -151,39 +151,213 @@ export function registerPage(opts: LayoutOpts, error?: string): string {
   `, { ...opts, title: '免费注册' });
 }
 
-/** Forgot password page */
-export function forgotPasswordPage(opts: LayoutOpts, message?: string): string {
+/**
+ * Forgot password page — 3-step flow like major sites (WeChat/Alipay):
+ *   Step 1: Enter phone → send SMS
+ *   Step 2: Enter verification code
+ *   Step 3: Set new password → done
+ */
+export function forgotPasswordPage(opts: LayoutOpts): string {
   return layout(`
     <section class="max-w-md mx-auto px-4 pt-16 pb-20">
       <div class="card p-8">
         <div class="text-center mb-8">
           <span class="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center text-2xl mx-auto mb-4">🔑</span>
-          <h1 class="text-2xl font-bold text-slate-900">找回密码</h1>
-          <p class="text-sm text-slate-500 mt-2">输入手机号，联系管理员重置密码</p>
+          <h1 class="text-2xl font-bold text-slate-900">重置密码</h1>
+          <p class="text-sm text-slate-500 mt-2" id="stepTitle">验证手机号以重置密码</p>
         </div>
 
-        ${message ? `<div class="mb-6 px-4 py-3 rounded-xl bg-primary-50 border border-primary-100 text-primary-600 text-sm">${escapeHtml(message)}</div>` : ''}
-
-        <div class="bg-amber-50 rounded-xl p-5 mb-6 text-sm text-amber-800">
-          <p class="font-bold mb-2">📱 两种方式找回密码：</p>
-          <p class="mb-1"><strong>方式一：</strong>联系管理员微信/电话，直接帮你重置</p>
-          <p><strong>方式二：</strong>重新注册一个账户（免费）</p>
+        <!-- Step indicators -->
+        <div class="flex justify-center gap-2 mb-8" id="stepDots">
+          <span class="step-dot w-8 h-1.5 rounded-full bg-primary-500"></span>
+          <span class="step-dot w-8 h-1.5 rounded-full bg-slate-200"></span>
+          <span class="step-dot w-8 h-1.5 rounded-full bg-slate-200"></span>
         </div>
 
-        <form action="/forgot-password" method="POST" class="space-y-4">
+        <!-- Step 1: Phone -->
+        <div id="step1" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1.5">你的手机号（用于核实身份）</label>
-            <input type="tel" name="phone" class="input-field" placeholder="输入注册时填的手机号">
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">注册时使用的手机号</label>
+            <div class="flex gap-2">
+              <input type="tel" id="resetPhone" class="input-field flex-1" placeholder="11位手机号" maxlength="11">
+              <button type="button" onclick="sendResetCode()" class="btn-primary text-sm !py-2 whitespace-nowrap" id="resetSendBtn">获取验证码</button>
+            </div>
           </div>
-          <button type="submit" class="btn-primary w-full !py-3 justify-center text-base">
-            提交申请 →
-          </button>
-        </form>
+          <p id="resetPhoneError" class="text-xs text-red-500 hidden"></p>
+        </div>
 
+        <!-- Step 2: Verify Code -->
+        <div id="step2" class="space-y-4 hidden">
+          <div class="bg-primary-50 rounded-xl p-4 text-sm text-primary-700 mb-4">
+            验证码已发送至 <strong id="maskedPhone">---</strong>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">短信验证码</label>
+            <input type="text" id="resetCode" class="input-field text-center text-2xl tracking-[0.5em] font-bold" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+          </div>
+          <p id="resetCodeError" class="text-xs text-red-500 hidden"></p>
+          <button type="button" onclick="verifyResetCode()" class="btn-primary w-full !py-3 justify-center text-base" id="verifyBtn">验证</button>
+          <p class="text-center">
+            <button type="button" onclick="sendResetCode()" class="text-sm text-primary-500 hover:text-primary-600 underline bg-transparent border-none cursor-pointer" id="resendLink">重新发送验证码</button>
+          </p>
+        </div>
+
+        <!-- Step 3: Set New Password -->
+        <div id="step3" class="space-y-4 hidden">
+          <div class="bg-green-50 rounded-xl p-4 text-sm text-green-700 mb-4">
+            ✅ 身份验证通过，请设置新密码
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">新密码</label>
+            <input type="password" id="newPassword" class="input-field" placeholder="8位以上，含字母+数字" minlength="8">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">确认新密码</label>
+            <input type="password" id="confirmPassword" class="input-field" placeholder="再次输入新密码" minlength="8">
+          </div>
+          <p id="resetPwdError" class="text-xs text-red-500 hidden"></p>
+          <button type="button" onclick="doResetPassword()" class="btn-primary w-full !py-3 justify-center text-base">重置密码并登录</button>
+        </div>
+
+        <!-- Success -->
+        <div id="stepSuccess" class="text-center space-y-4 hidden">
+          <div class="text-5xl mb-4">✅</div>
+          <h2 class="text-xl font-bold text-slate-900">密码重置成功！</h2>
+          <p class="text-sm text-slate-500">正在跳转至控制台...</p>
+        </div>
+
+        <!-- Back link -->
         <p class="text-center text-sm text-slate-400 mt-6">
           <a href="/login" class="text-primary-500 hover:text-primary-600 font-medium no-underline">← 返回登录</a>
         </p>
       </div>
     </section>
-  `, { ...opts, title: '找回密码' });
+
+    <script>
+      var resetPhone = '';
+      var resetToken = '';
+      var resetCountdown = 0;
+
+      function showStep(n) {
+        for (var i = 1; i <= 3; i++) {
+          var el = document.getElementById('step' + i);
+          if (el) el.classList.add('hidden');
+        }
+        var target = document.getElementById('step' + n);
+        if (target) target.classList.remove('hidden');
+        // Update dots
+        var dots = document.querySelectorAll('.step-dot');
+        for (var j = 0; j < dots.length; j++) {
+          dots[j].classList.toggle('bg-primary-500', j < n);
+          dots[j].classList.toggle('bg-slate-200', j >= n);
+        }
+        // Update title
+        var titles = ['验证手机号以重置密码', '输入短信验证码', '设置新密码'];
+        document.getElementById('stepTitle').textContent = titles[n-1] || '';
+      }
+
+      async function sendResetCode() {
+        var phone = document.getElementById('resetPhone').value;
+        if (!/^1[3-9][0-9]{9}$/.test(phone)) {
+          document.getElementById('resetPhoneError').textContent = '请输入正确的11位手机号';
+          document.getElementById('resetPhoneError').classList.remove('hidden');
+          return;
+        }
+        document.getElementById('resetPhoneError').classList.add('hidden');
+        if (resetCountdown > 0) return;
+
+        var btn = document.getElementById('resetSendBtn');
+        btn.disabled = true;
+        try {
+          var r = await fetch('/api/forgot-password/send-code', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({phone: phone})
+          });
+          var d = await r.json();
+          if (r.ok) {
+            resetPhone = phone;
+            document.getElementById('maskedPhone').textContent = phone.slice(0,3) + '****' + phone.slice(7);
+            if (d.code) {
+              // Dev mode: auto-fill code
+              document.getElementById('resetCode').value = d.code;
+            }
+            showStep(2);
+            resetCountdown = 60;
+            btn.textContent = resetCountdown + 's';
+            var timer = setInterval(function() {
+              resetCountdown--; btn.textContent = resetCountdown + 's';
+              if (resetCountdown <= 0) { clearInterval(timer); btn.textContent = '获取验证码'; btn.disabled = false; }
+            }, 1000);
+          } else {
+            document.getElementById('resetPhoneError').textContent = d.error || '发送失败';
+            document.getElementById('resetPhoneError').classList.remove('hidden');
+            btn.disabled = false;
+          }
+        } catch(e) { alert('网络错误'); btn.disabled = false; }
+      }
+
+      async function verifyResetCode() {
+        var code = document.getElementById('resetCode').value;
+        if (code.length !== 6) {
+          document.getElementById('resetCodeError').textContent = '请输入6位验证码';
+          document.getElementById('resetCodeError').classList.remove('hidden');
+          return;
+        }
+        document.getElementById('resetCodeError').classList.add('hidden');
+        var btn = document.getElementById('verifyBtn');
+        btn.textContent = '验证中...'; btn.disabled = true;
+        try {
+          var r = await fetch('/api/forgot-password/verify-code', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({phone: resetPhone, code: code})
+          });
+          var d = await r.json();
+          if (r.ok) {
+            resetToken = d.token;
+            showStep(3);
+          } else {
+            document.getElementById('resetCodeError').textContent = d.error || '验证码错误';
+            document.getElementById('resetCodeError').classList.remove('hidden');
+          }
+        } catch(e) { alert('网络错误'); }
+        btn.textContent = '验证'; btn.disabled = false;
+      }
+
+      async function doResetPassword() {
+        var pwd = document.getElementById('newPassword').value;
+        var confirmPwd = document.getElementById('confirmPassword').value;
+        var errEl = document.getElementById('resetPwdError');
+        if (pwd.length < 8 || !/[A-Za-z]/.test(pwd) || !/[0-9]/.test(pwd)) {
+          errEl.textContent = '密码至少8位，必须包含字母和数字';
+          errEl.classList.remove('hidden'); return;
+        }
+        if (pwd !== confirmPwd) {
+          errEl.textContent = '两次输入的密码不一致';
+          errEl.classList.remove('hidden'); return;
+        }
+        errEl.classList.add('hidden');
+        try {
+          var r = await fetch('/api/forgot-password/reset', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({phone: resetPhone, token: resetToken, password: pwd})
+          });
+          if (r.ok) {
+            document.getElementById('step3').classList.add('hidden');
+            document.getElementById('stepSuccess').classList.remove('hidden');
+            document.getElementById('stepDots').classList.add('hidden');
+            document.getElementById('stepTitle').textContent = '完成';
+            // Auto-redirect to dashboard after 1.5s
+            setTimeout(function() { window.location.href = '/dashboard'; }, 1500);
+          } else {
+            var d = await r.json();
+            errEl.textContent = d.error || '重置失败，请重试';
+            errEl.classList.remove('hidden');
+          }
+        } catch(e) { alert('网络错误'); }
+      }
+    </script>
+  `, { ...opts, title: '重置密码' });
 }

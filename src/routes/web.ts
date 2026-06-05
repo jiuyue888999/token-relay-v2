@@ -4,7 +4,7 @@ import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
-import { all, get as dbGet, run } from "../db/index.js";
+import { all, get as dbGet, run, getDb } from "../db/index.js";
 import { config } from "../config.js";
 import { homePage } from "../web/home.js";
 import { loginPage, registerPage } from "../web/auth.js";
@@ -305,18 +305,78 @@ web.get("/api/admin/payment-qr", async (c) => {
 // Forgot password page
 web.get("/forgot-password", async (c) => {
   const { forgotPasswordPage } = await import("../web/auth.js");
-  return c.html(forgotPasswordPage({ title: "找回密码" }));
+  return c.html(forgotPasswordPage({ title: "重置密码" }));
 });
 
-web.post("/forgot-password", async (c) => {
-  const body = await c.req.parseBody();
-  const phone = String(body.phone || "").trim();
-  if (phone) {
-    run("INSERT INTO payment_orders (id, user_id, package_id, package_name, quota_amount, price_cents, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      `pwd_${uuidv4().slice(0,8)}`, 'user_admin', 'pkg_trial', '密码重置申请: ' + phone, 0, 0, 'manual', 'pending');
+// Forgot password Step 1: Send SMS to registered phone
+web.post("/api/forgot-password/send-code", async (c) => {
+  const { phone } = await c.req.json();
+  if (!phone || !/^1[3-9]\d{9}$/.test(phone)) {
+    return c.json({ error: "请输入正确的手机号" }, 400);
   }
-  const { forgotPasswordPage } = await import("../web/auth.js");
-  return c.html(forgotPasswordPage({ title: "找回密码" }, "申请已提交！管理员会联系你核实身份后重置密码。"));
+  // Check phone is registered
+  const user = dbGet<{ id: string }>("SELECT id FROM users WHERE phone = ? AND is_active = 1", phone);
+  if (!user) {
+    return c.json({ error: "该手机号未注册" }, 404);
+  }
+  const { canSendCode, generateCode, sendSms } = await import("../services/sms.js");
+  const check = canSendCode(phone);
+  if (!check.ok) return c.json({ error: check.reason }, 429);
+  const code = generateCode(phone);
+  const result = await sendSms(phone, code);
+  const devCode = result.message.includes("开发模式") ? code : undefined;
+  return c.json({ success: true, message: result.message, code: devCode });
+});
+
+// Forgot password Step 2: Verify code, get reset token
+web.post("/api/forgot-password/verify-code", async (c) => {
+  const { phone, code } = await c.req.json();
+  if (!phone || !code) return c.json({ error: "参数错误" }, 400);
+  const { verifyCode } = await import("../services/sms.js");
+  if (!verifyCode(phone, code)) return c.json({ error: "验证码错误或已过期" }, 400);
+  // Generate one-time reset token (expires in 5 min)
+  const resetToken = uuidv4();
+  run("INSERT INTO verify_codes (phone, code, expires_at) VALUES (?, ?, datetime('now', '+5 minutes'))",
+    `reset:${phone}`, resetToken);
+  return c.json({ success: true, token: resetToken });
+});
+
+// Forgot password Step 3: Reset password with token
+web.post("/api/forgot-password/reset", async (c) => {
+  const { phone, token, password } = await c.req.json();
+  if (!phone || !token || !password) return c.json({ error: "参数错误" }, 400);
+  if (password.length < 8 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    return c.json({ error: "密码至少8位，必须包含字母和数字" }, 400);
+  }
+  // Verify reset token
+  const stmt = getDb().prepare(
+    "SELECT code FROM verify_codes WHERE phone = ? AND code = ? AND expires_at > datetime('now')"
+  );
+  stmt.bind([`reset:${phone}`, token]);
+  const valid = stmt.step();
+  stmt.free();
+  if (!valid) return c.json({ error: "操作已过期，请重新验证" }, 400);
+  // Update password
+  const hash = bcrypt.hashSync(password, 10);
+  run("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE phone = ?", hash, phone);
+  // Clean up tokens
+  run("DELETE FROM verify_codes WHERE phone = ?", [`reset:${phone}`]);
+  // Auto-login
+  const user = dbGet<{ id: string; email: string; phone: string; display_name: string }>(
+    "SELECT id, email, phone, display_name FROM users WHERE phone = ?", phone
+  );
+  if (user) {
+    const authToken = await signToken({
+      userId: user.id,
+      email: user.email || user.phone,
+      displayName: user.display_name || user.phone,
+      isAdmin: user.email === "admin@token-relay.local",
+    });
+    setCookie(c, "tr_session", authToken, {
+      httpOnly: true, secure: false, sameSite: "Lax", maxAge: 86400, path: "/",
+    });
+  }
+  return c.json({ success: true });
 });
 
 // Admin: reset user password
