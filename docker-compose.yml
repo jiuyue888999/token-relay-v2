@@ -1,35 +1,57 @@
-# Token Relay Station v2 — based on New API (industry standard)
-# Production deployment: PostgreSQL + Redis + New API Gateway
+# ═══════════════════════════════════════════════════════
+# Token Relay Station v2 — Hybrid Architecture
+#
+# frontend (Hono) :3000  → Beautiful Chinese UI
+# new-api   (Go)  :3001  → API Gateway + Admin Panel
+# postgres  :5432         → Production Database
+# redis     :6379         → Cache & Sessions
+# ═══════════════════════════════════════════════════════
 
 services:
-  # ═══ Core: New API Gateway ════════════════════════════════
+  # ═══ Frontend — Chinese Landing Page ═══════════════════
+  frontend:
+    build: ./frontend
+    container_name: token-relay-frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NEW_API_URL=http://new-api:3000
+      - TZ=Asia/Shanghai
+    depends_on:
+      - new-api
+
+  # ═══ Core: New API Gateway ═════════════════════════════
   new-api:
     image: calciumion/new-api:latest
     container_name: token-relay-gateway
     restart: always
-    command: --log-dir /app/logs
+    command: --log-dir /app/logs --port 3000
     ports:
-      - "3000:3000"
+      - "3001:3000"   # Expose directly for debugging
     volumes:
       - ./data:/data
       - ./logs:/app/logs
     environment:
-      # Database — using PostgreSQL for production stability
+      # PostgreSQL
       - SQL_DSN=postgresql://tokenrelay:${DB_PASSWORD:-changeMe123}@postgres:5432/tokenrelay
-      # Redis — for caching and session management
+      # Redis
       - REDIS_CONN_STRING=redis://redis
       # Timezone
       - TZ=Asia/Shanghai
-      # Security — CHANGE THESE in .env!
+      # Security — CHANGE THESE!
       - SESSION_SECRET=${SESSION_SECRET:-change-me-to-random-string}
       - CRYPTO_SECRET=${CRYPTO_SECRET:-change-me-to-random-string}
-      # Streaming / request config
+      # Streaming
       - STREAMING_TIMEOUT=600
       - STREAM_SCANNER_MAX_BUFFER_MB=128
       - MAX_REQUEST_BODY_MB=64
-      # Logging
+      # Features
       - ERROR_LOG_ENABLED=true
       - BATCH_UPDATE_ENABLED=true
+      # Auto-create initial root user
+      - INITIAL_ROOT_TOKEN=${ADMIN_KEY:-admin-initial-key}
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,7 +63,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # ═══ PostgreSQL 15 — Production Database ══════════════════
+  # ═══ PostgreSQL ════════════════════════════════════════
   postgres:
     image: postgres:15-alpine
     container_name: token-relay-db
@@ -58,7 +80,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ═══ Redis — Cache & Sessions ═════════════════════════════
+  # ═══ Redis ════════════════════════════════════════════
   redis:
     image: redis:7-alpine
     container_name: token-relay-cache
