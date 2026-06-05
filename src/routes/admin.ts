@@ -167,6 +167,49 @@ admin.post("/packages", async (c) => {
   return c.json({ package: pkg }, 201);
 });
 
+// ─── Payment Management ────────────────────────────────────────
+
+// Get pending payment orders for verification
+admin.get("/payments/pending", (c) => {
+  const orders = all(
+    "SELECT po.*, u.email as user_email, u.display_name as user_name FROM payment_orders po LEFT JOIN users u ON po.user_id = u.id WHERE po.status = 'pending' ORDER BY po.created_at DESC LIMIT 50"
+  );
+  return c.json({ orders });
+});
+
+// Verify a payment (approve & recharge)
+admin.post("/payments/verify", async (c) => {
+  const { order_id, action } = await c.req.json(); // action: 'approve' | 'reject'
+  const order = get("SELECT * FROM payment_orders WHERE id = ?", order_id) as any;
+  if (!order) return c.json({ error: "订单不存在" }, 404);
+  if (order.status !== 'pending') return c.json({ error: "订单已处理" }, 400);
+
+  if (action === 'approve') {
+    // Recharge user
+    run("UPDATE payment_orders SET status = 'done', updated_at = datetime('now') WHERE id = ?", order_id);
+    run("UPDATE users SET quota_remaining = quota_remaining + ?, updated_at = datetime('now') WHERE id = ?", order.quota_amount, order.user_id);
+    run("INSERT INTO recharge_logs (id, user_id, package_id, quota_amount, payment_method) VALUES (?, ?, ?, ?, ?)",
+      `rch_${order.id}`, order.user_id, order.package_id, order.quota_amount, order.payment_method || 'manual');
+    return c.json({ success: true, message: '已确认到账，额度已充值' });
+  } else {
+    run("UPDATE payment_orders SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?", order_id);
+    return c.json({ success: true, message: '已拒绝' });
+  }
+});
+
+// Save payment QR code config
+admin.post("/payments/qr", async (c) => {
+  const { wechat, alipay } = await c.req.json();
+  const value = JSON.stringify({ wechat: wechat || '', alipay: alipay || '' });
+  const existing = get("SELECT key FROM settings WHERE key = 'payment_qr'") as any;
+  if (existing) {
+    run("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'payment_qr'", value);
+  } else {
+    run("INSERT INTO settings (key, value) VALUES ('payment_qr', ?)", value);
+  }
+  return c.json({ success: true });
+});
+
 // ─── Usage Statistics ─────────────────────────────────────────
 
 admin.get("/stats", (c) => {

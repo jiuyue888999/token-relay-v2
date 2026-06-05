@@ -62,6 +62,7 @@ export function layout(content: string, opts: LayoutOpts): string {
         <a href="/#docs" class="text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg transition-colors no-underline">文档</a>
         ${opts.user ? `
           ${opts.admin ? '<a href="/admin" class="text-primary-500 hover:text-primary-600 px-3 py-1.5 rounded-lg transition-colors font-medium no-underline">管理面板</a>' : ''}
+          <a href="/recharge" class="text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg transition-colors no-underline">💰 充值</a>
           <a href="/dashboard" class="text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg transition-colors no-underline">控制台</a>
           <span class="text-slate-300">|</span>
           <span class="text-slate-600 font-medium">${escapeHtml(opts.user.display_name)}</span>

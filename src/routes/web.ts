@@ -206,6 +206,66 @@ web.post("/register", async (c) => {
 });
 
 // Logout
+// Recharge page
+web.get("/recharge", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.redirect("/login");
+  const { all: dbAll } = await import("../db/index.js");
+  const packages = dbAll("SELECT * FROM packages WHERE is_active = 1 ORDER BY price_cents ASC");
+  const { rechargePage } = await import("../web/recharge.js");
+  const html = rechargePage({
+    title: "充值中心",
+    user: { display_name: auth.displayName, email: auth.email },
+  }, packages);
+  return c.html(html);
+});
+
+// Recharge API: create order
+web.post("/api/recharge/create", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.json({ error: "请先登录" }, 401);
+  const { package_id, payment_method } = await c.req.json();
+  const { all: dbAll, run: dbRun } = await import("../db/index.js");
+  const pkg = dbAll("SELECT * FROM packages WHERE id = ? AND is_active = 1", package_id)[0] as any;
+  if (!pkg) return c.json({ error: "套餐不存在" }, 400);
+  const { v4: uuidv4 } = await import("uuid");
+  const id = `pay_${uuidv4().slice(0, 8)}`;
+  dbRun("INSERT INTO payment_orders (id, user_id, package_id, package_name, quota_amount, price_cents, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    id, auth.userId, package_id, pkg.name, pkg.quota_amount, pkg.price_cents, payment_method || 'manual', 'pending');
+  return c.json({ id, status: 'pending' });
+});
+
+// Recharge API: notify payment
+web.post("/api/recharge/notify", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.json({ error: "请先登录" }, 401);
+  const { package_id, payment_method } = await c.req.json();
+  const { all: dbAll, run: dbRun } = await import("../db/index.js");
+  const pkg = dbAll("SELECT * FROM packages WHERE id = ?", package_id)[0] as any;
+  if (!pkg) return c.json({ error: "套餐不存在" }, 400);
+  const { v4: uuidv4 } = await import("uuid");
+  const id = `pay_${uuidv4().slice(0, 8)}`;
+  dbRun("INSERT INTO payment_orders (id, user_id, package_id, package_name, quota_amount, price_cents, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    id, auth.userId, package_id, pkg.name, pkg.quota_amount, pkg.price_cents, payment_method || 'manual', 'pending');
+  return c.json({ id, status: 'pending', message: '已通知管理员' });
+});
+
+// Recharge API: get my orders
+web.get("/api/recharge/orders", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return c.json({ error: "请先登录" }, 401);
+  const { all: dbAll } = await import("../db/index.js");
+  const orders = dbAll("SELECT * FROM payment_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 20", auth.userId);
+  return c.json(orders);
+});
+
+// Admin payment QR config API
+web.get("/api/admin/payment-qr", async (c) => {
+  const { get: dbGet } = await import("../db/index.js");
+  const row = dbGet("SELECT value FROM settings WHERE key = ?", "payment_qr") as any;
+  return c.json(row ? JSON.parse(row.value) : {});
+});
+
 web.get("/logout", (c) => {
   deleteCookie(c, "tr_session", { path: "/" });
   return c.redirect("/");

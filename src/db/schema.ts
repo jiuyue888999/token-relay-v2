@@ -68,6 +68,27 @@ CREATE INDEX IF NOT EXISTS idx_usage_logs_user_id ON usage_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_usage_logs_created_at ON usage_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_upstream_keys_provider ON upstream_keys(provider);
 CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key);
+
+-- Payment system
+CREATE TABLE IF NOT EXISTS payment_orders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  package_id TEXT,
+  package_name TEXT,
+  quota_amount INTEGER NOT NULL DEFAULT 0,
+  price_cents INTEGER NOT NULL DEFAULT 0,
+  payment_method TEXT DEFAULT 'manual',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','done','cancelled')),
+  admin_note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 export const SEED_SQL = `
