@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS upstream_keys (
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
+  phone TEXT UNIQUE,
   email TEXT UNIQUE,
   password_hash TEXT,
   api_key TEXT NOT NULL UNIQUE,
@@ -89,6 +90,24 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- SMS verification codes
+CREATE TABLE IF NOT EXISTS verify_codes (
+  phone TEXT NOT NULL,
+  code TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
+);
+
+-- Login attempt tracking (brute force protection)
+CREATE TABLE IF NOT EXISTS login_attempts (
+  ip TEXT NOT NULL,
+  target TEXT NOT NULL,
+  success INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip, created_at);
 `;
 
 export const SEED_SQL = `
@@ -99,7 +118,7 @@ INSERT OR IGNORE INTO packages (id, name, description, quota_amount, price_cents
   ('pkg_pro', '专业包', '500万 tokens', 5000000, 3990),
   ('pkg_ultra', '旗舰包', '2000万 tokens', 20000000, 12990);
 
--- Default admin user (api_key will need to be reset)
-INSERT OR IGNORE INTO users (id, email, api_key, display_name, quota_remaining) VALUES
-  ('user_admin', 'admin@token-relay.local', 'sk-admin-default-change-me', 'Admin', 999999999);
+-- Default admin user (reset password after first login)
+INSERT OR IGNORE INTO users (id, phone, email, api_key, display_name, quota_remaining) VALUES
+  ('user_admin', '13800000000', 'admin@token-relay.local', 'sk-admin-default-change-me', '管理员', 999999999);
 `;

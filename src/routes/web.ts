@@ -87,38 +87,66 @@ web.get("/login", async (c) => {
   return c.html(loginPage({ title: "登录" }));
 });
 
+// ═══ Brute force check helper ══════════════════════════════
+function checkBruteForce(ip: string, target: string): boolean {
+  const recent = get<{cnt:number}>(
+    "SELECT COUNT(*) as cnt FROM login_attempts WHERE ip = ? AND success = 0 AND created_at > datetime('now', '-15 minutes')",
+    ip
+  );
+  if (recent && recent.cnt >= 5) {
+    return false; // Blocked
+  }
+  return true;
+}
+
+function logLoginAttempt(ip: string, target: string, success: boolean) {
+  run("INSERT INTO login_attempts (ip, target, success) VALUES (?, ?, ?)", ip, target, success ? 1 : 0);
+}
+
 web.post("/login", async (c) => {
   const body = await c.req.parseBody();
-  const email = String(body.email || "").trim();
+  const login = String(body.email || "").trim();
   const password = String(body.password || "");
+  const code = String(body.code || "").trim();
+  const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "127.0.0.1";
 
-  if (!email || !password) {
-    return c.html(loginPage({ title: "登录" }, "请填写邮箱和密码"));
+  if (!login || !password) {
+    return c.html(loginPage({ title: "登录" }, "请输入手机号/邮箱和密码"));
   }
 
-  const user = dbGet<{ id: string; email: string; display_name: string; password_hash: string; is_active: number }>(
-    "SELECT id, email, display_name, password_hash, is_active FROM users WHERE email = ?",
-    email
+  // Brute force check
+  if (!checkBruteForce(ip, login)) {
+    return c.html(loginPage({ title: "登录" }, "登录尝试过于频繁，请15分钟后再试"));
+  }
+
+  const user = dbGet<{ id: string; email: string; phone: string; display_name: string; password_hash: string; is_active: number }>(
+    "SELECT id, email, phone, display_name, password_hash, is_active FROM users WHERE phone = ? OR email = ?",
+    login, login
   );
 
   if (!user || !user.is_active) {
-    return c.html(loginPage({ title: "登录" }, "邮箱不存在或账户已停用"));
+    logLoginAttempt(ip, login, false);
+    return c.html(loginPage({ title: "登录" }, "账号不存在或已停用"));
   }
 
   if (!user.password_hash) {
+    logLoginAttempt(ip, login, false);
     return c.html(loginPage({ title: "登录" }, "此账户未设置密码，请联系管理员"));
   }
 
   const valid = bcrypt.compareSync(password, user.password_hash);
   if (!valid) {
+    logLoginAttempt(ip, login, false);
     return c.html(loginPage({ title: "登录" }, "密码错误"));
   }
 
-  // Sign JWT
+  // Login success
+  logLoginAttempt(ip, login, true);
+
   const token = await signToken({
     userId: user.id,
-    email: user.email,
-    displayName: user.display_name || user.email,
+    email: user.email || user.phone,
+    displayName: user.display_name || user.phone,
     isAdmin: user.email === "admin@token-relay.local",
   });
 
@@ -142,21 +170,29 @@ web.get("/register", async (c) => {
 
 web.post("/register", async (c) => {
   const body = await c.req.parseBody();
-  const email = String(body.email || "").trim();
+  const phone = String(body.phone || "").trim();
+  const email = String(body.email || "").trim() || null;
   const display_name = String(body.display_name || "").trim();
   const password = String(body.password || "");
+  const code = String(body.code || "").trim();
 
-  if (!email || !display_name || !password) {
-    return c.html(registerPage({ title: "免费注册" }, "请填写所有必填字段"));
+  if (!phone || !display_name || !password) {
+    return c.html(registerPage({ title: "免费注册" }, "请填写手机号和密码"));
   }
-  if (password.length < 6) {
-    return c.html(registerPage({ title: "免费注册" }, "密码至少需要6位"));
+  if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return c.html(registerPage({ title: "免费注册" }, "密码至少8位，必须包含字母和数字"));
   }
 
-  // Check if email exists
-  const existing = dbGet<{ id: string }>("SELECT id FROM users WHERE email = ?", email);
+  // Verify SMS code
+  const { verifyCode: verifySms } = await import("../services/sms.js");
+  if (!verifySms(phone, code)) {
+    return c.html(registerPage({ title: "免费注册" }, "验证码错误或已过期"));
+  }
+
+  // Check if phone exists
+  const existing = dbGet<{ id: string }>("SELECT id FROM users WHERE phone = ?", phone);
   if (existing) {
-    return c.html(registerPage({ title: "免费注册" }, "该邮箱已被注册"));
+    return c.html(registerPage({ title: "免费注册" }, "该手机号已被注册"));
   }
 
   const id = `user_${uuidv4().slice(0, 8)}`;
@@ -171,9 +207,9 @@ web.post("/register", async (c) => {
 
   try {
     run(
-      `INSERT INTO users (id, email, password_hash, api_key, display_name, quota_remaining)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      id, email, passwordHash, apiKey, display_name, trialQuota
+      `INSERT INTO users (id, phone, email, password_hash, api_key, display_name, quota_remaining)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      id, phone, email, passwordHash, apiKey, display_name, trialQuota
     );
 
     // Log trial recharge
@@ -264,6 +300,79 @@ web.get("/api/admin/payment-qr", async (c) => {
   const { get: dbGet } = await import("../db/index.js");
   const row = dbGet("SELECT value FROM settings WHERE key = ?", "payment_qr") as any;
   return c.json(row ? JSON.parse(row.value) : {});
+});
+
+// Forgot password page
+web.get("/forgot-password", async (c) => {
+  const { forgotPasswordPage } = await import("../web/auth.js");
+  return c.html(forgotPasswordPage({ title: "找回密码" }));
+});
+
+web.post("/forgot-password", async (c) => {
+  const body = await c.req.parseBody();
+  const phone = String(body.phone || "").trim();
+  if (phone) {
+    run("INSERT INTO payment_orders (id, user_id, package_id, package_name, quota_amount, price_cents, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      `pwd_${uuidv4().slice(0,8)}`, 'user_admin', 'pkg_trial', '密码重置申请: ' + phone, 0, 0, 'manual', 'pending');
+  }
+  const { forgotPasswordPage } = await import("../web/auth.js");
+  return c.html(forgotPasswordPage({ title: "找回密码" }, "申请已提交！管理员会联系你核实身份后重置密码。"));
+});
+
+// Admin: reset user password
+web.post("/api/admin/reset-password", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth || !auth.isAdmin) return c.json({ error: "无权限" }, 403);
+  const { user_id, new_password } = await c.req.json();
+  if (!user_id || !new_password || new_password.length < 6) return c.json({ error: "参数错误" }, 400);
+  const hash = (await import("bcryptjs")).hashSync(new_password, 10);
+  run("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?", hash, user_id);
+  return c.json({ success: true });
+});
+
+// Send SMS verification code
+web.post("/api/sms/send", async (c) => {
+  const { phone } = await c.req.json();
+  if (!phone || !/^1[3-9]\d{9}$/.test(phone)) {
+    return c.json({ error: "请输入正确的手机号" }, 400);
+  }
+  const { canSendCode, generateCode, sendSms } = await import("../services/sms.js");
+  const check = canSendCode(phone);
+  if (!check.ok) {
+    return c.json({ error: check.reason }, 429);
+  }
+  const code = generateCode(phone);
+  const result = await sendSms(phone, code);
+  // In DEV mode, include the code in response for testing
+  const devCode = result.message.includes("开发模式") ? code : undefined;
+  return c.json({ success: true, message: result.message, code: devCode });
+});
+
+// Verify a code (used by register/login flows)
+web.post("/api/sms/verify", async (c) => {
+  const { phone, code } = await c.req.json();
+  const { verifyCode } = await import("../services/sms.js");
+  if (verifyCode(phone, code)) {
+    return c.json({ success: true });
+  }
+  return c.json({ error: "验证码错误或已过期" }, 400);
+});
+
+// Admin: SMS configuration
+web.get("/api/admin/sms-config", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth || !auth.isAdmin) return c.json({ error: "无权限" }, 403);
+  const { getSmsConfig } = await import("../services/sms.js");
+  return c.json(getSmsConfig());
+});
+
+web.post("/api/admin/sms-config", async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth || !auth.isAdmin) return c.json({ error: "无权限" }, 403);
+  const body = await c.req.json();
+  const { setSmsConfig } = await import("../services/sms.js");
+  setSmsConfig(body);
+  return c.json({ success: true });
 });
 
 web.get("/logout", (c) => {
