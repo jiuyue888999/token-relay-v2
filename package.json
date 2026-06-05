@@ -15,7 +15,8 @@
     "dotenv": "^16.4.5",
     "hono": "^4.4.0",
     "sql.js": "^1.11.0",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "jose": "^5.9.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
