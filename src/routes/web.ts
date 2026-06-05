@@ -269,7 +269,7 @@ web.get("/dashboard", async (c) => {
 web.get("/admin", async (c) => {
   const auth = await requireAuth(c);
   if (!auth || !auth.isAdmin) {
-    return c.html(`<html><body><h2>需要管理员权限</h2><a href="/login">登录</a></body></html>`, 403 as any);
+    return c.redirect("/login");
   }
 
   const keys = all<Record<string, any>>("SELECT * FROM upstream_keys ORDER BY priority DESC, created_at ASC");
