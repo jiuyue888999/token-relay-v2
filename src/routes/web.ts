@@ -89,12 +89,12 @@ web.get("/login", async (c) => {
 
 // ═══ Brute force check helper ══════════════════════════════
 function checkBruteForce(ip: string, target: string): boolean {
-  const recent = get<{cnt:number}>(
+  const recent = dbGet<{cnt:number}>(
     "SELECT COUNT(*) as cnt FROM login_attempts WHERE ip = ? AND success = 0 AND created_at > datetime('now', '-15 minutes')",
     ip
   );
   if (recent && recent.cnt >= 5) {
-    return false; // Blocked
+    return false;
   }
   return true;
 }
