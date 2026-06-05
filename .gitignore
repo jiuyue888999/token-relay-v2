@@ -1,0 +1,5 @@
+.env
+pg_data/
+redis_data/
+data/
+logs/

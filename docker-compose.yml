@@ -1,0 +1,67 @@
+# Token Relay Station v2 — based on New API (industry standard)
+# Production deployment: PostgreSQL + Redis + New API Gateway
+
+services:
+  # ═══ Core: New API Gateway ════════════════════════════════
+  new-api:
+    image: calciumion/new-api:latest
+    container_name: token-relay-gateway
+    restart: always
+    command: --log-dir /app/logs
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      # Database — using PostgreSQL for production stability
+      - SQL_DSN=postgresql://tokenrelay:${DB_PASSWORD:-changeMe123}@postgres:5432/tokenrelay
+      # Redis — for caching and session management
+      - REDIS_CONN_STRING=redis://redis
+      # Timezone
+      - TZ=Asia/Shanghai
+      # Security — CHANGE THESE in .env!
+      - SESSION_SECRET=${SESSION_SECRET:-change-me-to-random-string}
+      - CRYPTO_SECRET=${CRYPTO_SECRET:-change-me-to-random-string}
+      # Streaming / request config
+      - STREAMING_TIMEOUT=600
+      - STREAM_SCANNER_MAX_BUFFER_MB=128
+      - MAX_REQUEST_BODY_MB=64
+      # Logging
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ═══ PostgreSQL 15 — Production Database ══════════════════
+  postgres:
+    image: postgres:15-alpine
+    container_name: token-relay-db
+    restart: always
+    environment:
+      - POSTGRES_USER=tokenrelay
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-changeMe123}
+      - POSTGRES_DB=tokenrelay
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenrelay"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ═══ Redis — Cache & Sessions ═════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: token-relay-cache
+    restart: always
+    volumes:
+      - ./redis_data:/data
