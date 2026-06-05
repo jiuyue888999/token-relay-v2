@@ -495,7 +495,8 @@ web.get("/dashboard", async (c) => {
 
   if (!user) return c.redirect("/login");
 
-  const keyCount = (dbGet("SELECT COUNT(*) as cnt FROM api_keys WHERE user_id = ? AND is_active = 1", auth.userId) as any)?.cnt || 0;
+  const keyRow = dbGet<{cnt: number}>("SELECT COUNT(*) as cnt FROM api_keys WHERE user_id = ? AND is_active = 1", auth.userId);
+  const keyCount = keyRow?.cnt || 0;
 
   const recentLogs = all<Record<string, any>>(
     `SELECT id, provider, model, prompt_tokens, completion_tokens, total_tokens, quota_cost, success, error_msg, created_at

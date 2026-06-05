@@ -69,15 +69,14 @@ export function dashboardPage(opts: LayoutOpts & { data?: DashboardData }): stri
           <div><span class="text-fuchsia-400">from</span> openai <span class="text-fuchsia-400">import</span> OpenAI</div>
           <div class="mt-2"><span class="text-sky-400">client</span> = OpenAI(</div>
           <div>&nbsp;&nbsp;api_key=<span class="text-amber-400">"你的API密钥"</span>,</div>
-          <div>&nbsp;&nbsp;base_url=<span class="text-amber-400">"https://${escapeHtml(opts.user?.display_name||'')}.replace(/.*/,'')}${escapeHtml(typeof window !== 'undefined' ? '' : '')}"</span></div>
-          <div class="text-slate-500"># 在 /keys 页面创建密钥后替换上面的 api_key</div>
+          <div>&nbsp;&nbsp;base_url=<span class="text-amber-400" id="baseUrlDisplay">"https://你的域名/v1"</span></div>
           <div>)</div>
           <div class="mt-2 text-slate-400"># 对话</div>
           <div>client.chat.completions.create(model=<span class="text-amber-400">"gpt-5.5"</span>, messages=[...])</div>
         </div>
       </div>
     </div>
-    <script>document.querySelector('.bg-slate-900').innerHTML = document.querySelector('.bg-slate-900').innerHTML.replace('replace-me', window.location.host);</script>
+    <script>document.getElementById('baseUrlDisplay').textContent = '"https://' + window.location.host + '/v1"';</script>
   `, { ...opts, title: '控制台', scripts: TOAST_SCRIPT });
 }
 
