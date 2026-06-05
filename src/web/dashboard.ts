@@ -1,9 +1,10 @@
 import { layout, escapeHtml, TOAST_SCRIPT } from "./layout.js";
 import type { LayoutOpts } from "./layout.js";
 
-interface DashboardData {
+export interface DashboardData {
   user: Record<string, any>;
   apiKeyCount: number;
+  recentLogs?: Array<Record<string, any>>;
 }
 
 export function dashboardPage(opts: LayoutOpts & { data?: DashboardData }): string {
