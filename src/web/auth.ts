@@ -62,18 +62,18 @@ export function registerPage(opts: LayoutOpts, error?: string): string {
 
         ${error ? `<div class="mb-6 px-4 py-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm">${escapeHtml(error)}</div>` : ''}
 
-        <form onsubmit="return doRegister(event)" class="space-y-4">
+        <form action="/register" method="POST" onsubmit="return validateReg(event)" class="space-y-4">
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">手机号</label>
             <div class="flex gap-2">
-              <input type="tel" name="phone" id="regPhone" class="input-field flex-1" placeholder="11位手机号" required autofocus pattern="1[3-9]\d{9}" maxlength="11">
+              <input type="tel" name="phone" id="regPhone" class="input-field flex-1" placeholder="11位手机号" required autofocus maxlength="11">
               <button type="button" onclick="sendCode()" class="btn-secondary text-sm !py-2 whitespace-nowrap" id="sendBtn">获取验证码</button>
             </div>
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">短信验证码</label>
-            <input type="text" name="code" id="regCode" class="input-field" placeholder="6位数字验证码" required pattern="\d{6}" maxlength="6">
-            <p id="codeHint" class="text-xs text-slate-400 mt-1 hidden">验证码已发送至你的手机</p>
+            <input type="text" name="code" id="regCode" class="input-field" placeholder="6位数字验证码" required maxlength="6">
+            <p id="codeHint" class="text-xs text-slate-400 mt-1 hidden"></p>
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">显示名称</label>
@@ -81,7 +81,7 @@ export function registerPage(opts: LayoutOpts, error?: string): string {
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1.5">密码</label>
-            <input type="password" name="password" id="regPwd" class="input-field" placeholder="至少8位，含字母+数字" required minlength="8" pattern="^(?=.*[A-Za-z])(?=.*\d).{8,}$">
+            <input type="password" name="password" id="regPwd" class="input-field" placeholder="至少8位，含字母+数字" required minlength="8">
             <p class="text-xs text-slate-400 mt-1">8位以上，必须包含字母和数字</p>
           </div>
           <button type="submit" class="btn-primary w-full !py-3 justify-center text-base" id="regBtn">
@@ -90,27 +90,29 @@ export function registerPage(opts: LayoutOpts, error?: string): string {
         </form>
 
         <script>
-          let countdown = 0;
+          var countdown = 0;
+          var codeSent = false;
           async function sendCode() {
-            const phone = document.getElementById('regPhone').value;
-            if (!/^1[3-9]\d{9}$/.test(phone)) { alert('请输入正确的11位手机号'); return; }
+            var phone = document.getElementById('regPhone').value;
+            if (!/^1[3-9][0-9]{9}$/.test(phone)) { alert('请输入正确的11位手机号'); return; }
             if (countdown > 0) return;
-            const btn = document.getElementById('sendBtn');
+            var btn = document.getElementById('sendBtn');
             btn.disabled = true;
             try {
-              const r = await fetch('/api/sms/send', {
+              var r = await fetch('/api/sms/send', {
                 method:'POST',
                 headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({phone})
+                body: JSON.stringify({phone: phone})
               });
-              const d = await r.json();
+              var d = await r.json();
               if (r.ok) {
                 document.getElementById('codeHint').classList.remove('hidden');
-                if (d.code) document.getElementById('codeHint').textContent = '[测试模式] 验证码: ' + d.code;
-                else document.getElementById('codeHint').textContent = '验证码已发送至 ' + phone;
+                if (d.code) { document.getElementById('codeHint').textContent = '[测试模式] 验证码: ' + d.code; }
+                else { document.getElementById('codeHint').textContent = '验证码已发送至 ' + phone; }
+                codeSent = true;
                 countdown = 60;
                 btn.textContent = countdown + 's';
-                const timer = setInterval(() => {
+                var timer = setInterval(function() {
                   countdown--; btn.textContent = countdown + 's';
                   if (countdown <= 0) { clearInterval(timer); btn.textContent = '获取验证码'; btn.disabled = false; }
                 }, 1000);
@@ -120,31 +122,14 @@ export function registerPage(opts: LayoutOpts, error?: string): string {
               }
             } catch(e) { alert('网络错误'); btn.disabled = false; }
           }
-          async function doRegister(e) {
-            e.preventDefault();
-            const phone = document.getElementById('regPhone').value;
-            const code = document.getElementById('regCode').value;
-            const displayName = document.querySelector('input[name=display_name]').value;
-            const password = document.getElementById('regPwd').value;
-            if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-              alert('密码至少8位，必须包含字母和数字'); return false;
-            }
-            // Verify code first
-            const vr = await fetch('/api/sms/verify', {
-              method:'POST',
-              headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({phone, code})
-            });
-            if (!vr.ok) { alert('验证码错误或已过期'); return false; }
-            // Submit registration
-            const rr = await fetch('/register', {
-              method:'POST',
-              headers:{'Content-Type':'application/x-www-form-urlencoded'},
-              body: new URLSearchParams({phone, code, display_name: displayName, password})
-            });
-            if (rr.redirected) { window.location.href = rr.url; }
-            else { const t = await rr.text(); document.write(t); }
-            return false;
+          function validateReg(e) {
+            var phone = document.getElementById('regPhone').value;
+            var code = document.getElementById('regCode').value;
+            var pwd = document.getElementById('regPwd').value;
+            if (!/^1[3-9][0-9]{9}$/.test(phone)) { alert('请输入正确的11位手机号'); e.preventDefault(); return false; }
+            if (code.length !== 6) { alert('请输入6位验证码'); e.preventDefault(); return false; }
+            if (pwd.length < 8 || !/[A-Za-z]/.test(pwd) || !/[0-9]/.test(pwd)) { alert('密码至少8位，必须包含字母和数字'); e.preventDefault(); return false; }
+            return true;
           }
         </script>
 
