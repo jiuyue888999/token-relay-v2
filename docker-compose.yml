@@ -21,6 +21,9 @@ services:
       - TZ=Asia/Shanghai
     depends_on:
       - new-api
+    # Tell Zeabur this is the public-facing service
+    labels:
+      - "zeabur.app/public=true"
 
   # ═══ Core: New API Gateway ═════════════════════════════
   new-api:
@@ -28,8 +31,9 @@ services:
     container_name: token-relay-gateway
     restart: always
     command: --log-dir /app/logs --port 3000
-    ports:
-      - "3001:3000"   # Expose directly for debugging
+    # new-api doesn't need public port — frontend proxies to it internally
+    expose:
+      - "3000"
     volumes:
       - ./data:/data
       - ./logs:/app/logs
